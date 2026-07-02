@@ -648,6 +648,146 @@ def subir_cancion(request):
     }
     return render(request, 'SubirCancion.html', context)
 
+# ============================================================
+# NUEVO: Panel de estadísticas del artista
+# ============================================================
+def estadisticas_artista(request):
+    if 'usuario_id' not in request.session or request.session.get('rol') != 'Artista':
+        messages.error(request, "Solo los artistas pueden ver sus estadísticas.")
+        return redirect('Main:dashboard_negocio')
+
+    artista_id = request.session['usuario_id']
+    db = get_db()
+
+    # ── Datos del artista y su discográfica ───────────────
+    usuario_artista = db['usuarios'].find_one({'usuarioId': artista_id}) or {}
+    perfil = usuario_artista.get('perfilArtista', {})
+    discografica_id = perfil.get('discograficaId')
+    discografica_nombre = None
+    if discografica_id:
+        disc = db['usuarios'].find_one({'usuarioId': discografica_id})
+        if disc:
+            discografica_nombre = disc.get('nickname', 'Discográfica')
+
+    # ── IDs de álbumes y canciones del artista ────────────
+    mis_albumes_ids = [a['albumID'] for a in db['catalogo'].find({'artistaId': artista_id}, {'albumID': 1})]
+    mis_canciones_ids = [
+        c['cancionId'] for c in db['canciones'].find(
+            {'albumId': {'$in': mis_albumes_ids}}, {'cancionId': 1}
+        )
+    ] if mis_albumes_ids else []
+
+    # ── Totales generales ──────────────────────────────────
+    total_reproducciones = 0
+    total_likes = 0
+    if mis_canciones_ids:
+        total_reproducciones = db['reproducciones'].count_documents({'cancionId': {'$in': mis_canciones_ids}})
+        total_likes = db['interacciones'].count_documents({'cancionId': {'$in': mis_canciones_ids}, 'tipoInteraccion': 'Like'})
+
+    total_seguidores = db['interacciones'].count_documents({'artistaId': artista_id, 'tipoInteraccion': 'Seguir'})
+
+    # ── Reproducciones por mes (histórico agrupado) ───────
+    reproducciones_por_mes = []
+    if mis_canciones_ids:
+        try:
+            pipeline_mes = list(db['reproducciones'].aggregate([
+                {'$match': {'cancionId': {'$in': mis_canciones_ids}}},
+                {'$addFields': {
+                    'fechaConvertida': {'$dateFromString': {'dateString': '$fechaHora', 'onError': None}}
+                }},
+                {'$match': {'fechaConvertida': {'$ne': None}}},
+                {'$group': {
+                    '_id': {'anio': {'$year': '$fechaConvertida'}, 'mes': {'$month': '$fechaConvertida'}},
+                    'total': {'$sum': 1}
+                }},
+                {'$sort': {'_id.anio': 1, '_id.mes': 1}},
+                {'$limit': 12}
+            ]))
+            meses_es = ['', 'Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
+            for item in pipeline_mes:
+                reproducciones_por_mes.append({
+                    'mes': f"{meses_es[item['_id']['mes']]} {item['_id']['anio']}",
+                    'total': item['total']
+                })
+        except Exception as e:
+            print(f"Error calculando reproducciones por mes: {e}")
+
+    max_reproducciones_mes = max([m['total'] for m in reproducciones_por_mes], default=0)
+    for m in reproducciones_por_mes:
+        m['porcentaje'] = round((m['total'] / max_reproducciones_mes) * 100) if max_reproducciones_mes else 0
+
+    # ── Top 5 canciones más escuchadas ────────────────────
+    top_canciones = []
+    if mis_canciones_ids:
+        try:
+            top_canciones = list(db['reproducciones'].aggregate([
+                {'$match': {'cancionId': {'$in': mis_canciones_ids}}},
+                {'$group': {'_id': '$cancionId', 'total': {'$sum': 1}}},
+                {'$sort': {'total': -1}},
+                {'$limit': 5},
+                {'$lookup': {'from': 'canciones', 'localField': '_id',
+                             'foreignField': 'cancionId', 'as': 'cancionData'}},
+                {'$unwind': '$cancionData'},
+                {'$project': {
+                    'Cancion': '$cancionData.tituloCancion',
+                    'Reproducciones': '$total'
+                }}
+            ]))
+        except Exception as e:
+            print(f"Error calculando top canciones: {e}")
+
+    # ── Regalías del periodo más reciente ─────────────────
+    regalias_mes_actual = 0
+    try:
+        liquidacion_actual = db['liquidaciones'].find_one(
+            {'artistaId': artista_id}, sort=[('periodo', -1)]
+        )
+        if liquidacion_actual:
+            regalias_mes_actual = liquidacion_actual.get('montoPagarUSD', 0)
+    except Exception as e:
+        print(f"Error obteniendo regalías del artista: {e}")
+
+    context = {
+        'total_reproducciones': total_reproducciones,
+        'total_seguidores': total_seguidores,
+        'total_likes': total_likes,
+        'total_canciones': len(mis_canciones_ids),
+        'reproducciones_por_mes': reproducciones_por_mes,
+        'top_canciones': top_canciones,
+        'regalias_mes_actual': regalias_mes_actual,
+        'discografica_nombre': discografica_nombre,
+        'tiene_discografica': discografica_id is not None,
+    }
+    return render(request, 'Estadisticas.html', context)
+
+
+# ============================================================
+# NUEVO: Salir de la discográfica (con advertencia de regalías)
+# ============================================================
+def salir_discografica(request):
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Método no permitido'}, status=405)
+
+    if 'usuario_id' not in request.session or request.session.get('rol') != 'Artista':
+        return JsonResponse({'error': 'No autorizado'}, status=403)
+
+    artista_id = request.session['usuario_id']
+    db = get_db()
+
+    usuario = db['usuarios'].find_one({'usuarioId': artista_id})
+    if not usuario or not usuario.get('perfilArtista', {}).get('discograficaId'):
+        return JsonResponse({'error': 'No perteneces a ninguna discográfica actualmente.'}, status=400)
+
+    try:
+        db['usuarios'].update_one(
+            {'usuarioId': artista_id},
+            {'$set': {'perfilArtista.discograficaId': None}}
+        )
+        return JsonResponse({'ok': True, 'mensaje': 'Has salido de la discográfica correctamente.'})
+    except Exception as e:
+        return JsonResponse({'ok': False, 'error': str(e)}, status=500)
+
+
 def ver_planes(request):
     try:
         db = get_db() # Usamos tu conexión ya configurada
@@ -691,3 +831,77 @@ def cambiar_plan(request):
             return JsonResponse({'ok': True})
         except Exception as e:
             return JsonResponse({'ok': False, 'error': str(e)}, status=500)
+        
+def panel_discografica(request):
+    if request.session.get('rol') != 'Discografica':
+        messages.error(request, "Solo las discográficas pueden acceder a este panel.")
+        return redirect('Main:dashboard_negocio')
+
+    discografica_id = request.session.get('usuario_id')
+    db = get_db()
+
+    try:
+        # Artistas que NO tienen ninguna discográfica asignada
+        artistas_libres = list(db['usuarios'].find({
+            'rolPerfil': 'Artista',
+            '$or': [
+                {'perfilArtista.discograficaId': None},
+                {'perfilArtista.discograficaId': {'$exists': False}},
+                {'perfilArtista.discograficaId': "Null"}
+            ]
+        }))
+
+        # Artistas ya vinculados a ESTA discográfica (para referencia)
+        artistas_vinculados = list(db['usuarios'].find({
+            'rolPerfil': 'Artista',
+            'perfilArtista.discograficaId': int(discografica_id)
+        }))
+    except Exception as e:
+        artistas_libres, artistas_vinculados = [], []
+        messages.error(request, f"Error al cargar artistas: {e}")
+
+    context = {
+        'artistas_libres': artistas_libres,
+        'artistas_vinculados': artistas_vinculados,
+    }
+    return render(request, 'PanelDiscografica.html', context)
+
+
+def vincular_artista(request):
+    if request.method != 'POST':
+        return redirect('Main:panel_discografica')
+
+    if request.session.get('rol') != 'Discografica':
+        messages.error(request, "No autorizado.")
+        return redirect('Main:dashboard_negocio')
+
+    discografica_id = request.session.get('usuario_id')
+    artista_id = request.POST.get('artista_id')
+
+    if not artista_id:
+        messages.error(request, "Falta indicar el artista a vincular.")
+        return redirect('Main:panel_discografica')
+
+    db = get_db()
+
+    try:
+        artista = db['usuarios'].find_one({'usuarioId': int(artista_id), 'rolPerfil': 'Artista'})
+
+        if not artista:
+            messages.error(request, "El artista indicado no existe.")
+            return redirect('Main:panel_discografica')
+
+        # Evita pisar el vínculo si otra discográfica ya lo tomó entre tanto
+        if artista.get('perfilArtista', {}).get('discograficaId'):
+            messages.error(request, f"{artista.get('nickname', 'Ese artista')} ya pertenece a otra discográfica.")
+            return redirect('Main:panel_discografica')
+
+        db['usuarios'].update_one(
+            {'usuarioId': int(artista_id)},
+            {'$set': {'perfilArtista.discograficaId': int(discografica_id)}}
+        )
+        messages.success(request, f"Vinculaste a {artista.get('nickname', 'el artista')} con tu discográfica.")
+    except Exception as e:
+        messages.error(request, f"Error al vincular artista: {e}")
+
+    return redirect('Main:panel_discografica')

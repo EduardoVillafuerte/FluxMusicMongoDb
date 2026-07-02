@@ -357,6 +357,16 @@
             <a href="{% url 'Main:subir_cancion' %}" class="nav-item">
                 <i class="fa-solid fa-cloud-arrow-up"></i> <span>Subir Canción</span>
             </a>
+            <a href="{% url 'Main:estadisticas_artista' %}" class="nav-item">
+                <i class="fa-solid fa-chart-line"></i> <span>Mis Estadísticas</span>
+            </a>
+            {% endif %}
+
+            {% if request.session.rol == 'Discografica' %}
+            <span class="nav-label" style="margin-top: 20px;">Discográfica</span>
+            <a href="{% url 'Main:panel_discografica' %}" class="nav-item">
+                <i class="fa-solid fa-link"></i> <span>Vincular Artistas</span>
+            </a>
             {% endif %}
 
             <span class="nav-label" style="margin-top: 20px;">Tus Playlists</span>

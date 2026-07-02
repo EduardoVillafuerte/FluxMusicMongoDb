@@ -17,4 +17,8 @@ urlpatterns = [
     path('artista/subir-cancion/', views.subir_cancion, name='subir_cancion'),
     path('planes/', views.ver_planes, name='ver_planes'),
     path('planes/cambiar/', views.cambiar_plan, name='cambiar_plan'),
+    path('estadisticas/', views.estadisticas_artista, name='estadisticas_artista'),
+    path('salir-discografica/', views.salir_discografica, name='salir_discografica'),
+    path('discografica/panel/', views.panel_discografica, name='panel_discografica'),
+    path('discografica/vincular/', views.vincular_artista, name='vincular_artista'),
 ]
