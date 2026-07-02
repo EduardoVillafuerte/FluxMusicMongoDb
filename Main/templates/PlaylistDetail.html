@@ -1,0 +1,190 @@
+{% extends 'Mainbase.html' %}
+{% load static %}
+
+{% block title %}{{ playlist.nombrePlaylist }} - FluxMusic{% endblock %}
+
+{% block extra_css %}
+<style>
+.playlist-header { padding: 2.5rem; display:flex; align-items:center; gap:1.5rem; background: linear-gradient(135deg, #1a1030, #0d1020); border-bottom:1px solid #1a1e2b; }
+.playlist-cover { width:140px; height:140px; border-radius:16px; background: linear-gradient(135deg,#7c5cff,#bc42ca); display:flex; align-items:center; justify-content:center; font-size:3.5rem; flex-shrink:0; }
+.playlist-header h1 { color:#fff; font-family:'Syne',sans-serif; font-weight:800; font-size:2rem; margin-bottom:.3rem; }
+.playlist-header p { color:#8892aa; font-size:.9rem; }
+
+.pd-content { max-width:1100px; margin:0 auto; padding:2rem 2.5rem 5rem; }
+.pd-section-title { color:#fff; font-weight:700; font-size:1.1rem; margin-bottom:1rem; font-family:'Syne',sans-serif; }
+
+.pd-song-row { display:flex; align-items:center; gap:.9rem; padding:.7rem; border-radius:10px; transition:.2s; }
+.pd-song-row:hover { background: rgba(255,255,255,.04); }
+.pd-song-icon { width:38px; height:38px; border-radius:8px; background:#141826; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+.pd-song-info { flex:1; min-width:0; cursor:pointer; }
+.pd-song-title { color:#dde3f0; font-weight:600; font-size:.88rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.pd-song-artist { color:#505878; font-size:.75rem; }
+.pd-remove-btn, .pd-add-btn {
+    width:30px; height:30px; border-radius:50%; border:none; cursor:pointer;
+    display:flex; align-items:center; justify-content:center; flex-shrink:0; font-size:.8rem; transition:.2s;
+}
+.pd-remove-btn { background: rgba(255,80,80,.12); color:#ff6b6b; }
+.pd-remove-btn:hover { background:#ff6b6b; color:#fff; }
+.pd-add-btn { background: rgba(124,92,255,.12); color:#a78bfa; border:1px solid rgba(124,92,255,.3); }
+.pd-add-btn:hover { background:#7c5cff; color:#fff; }
+.pd-add-btn.added { background:#2fdbb7; color:#07080d; border-color:#2fdbb7; }
+
+.pd-search-input {
+    width:100%; background:#0e1018; border:1px solid #1a1e2b; border-radius:12px;
+    padding:.7rem 1.1rem; color:#dde3f0; font-size:.88rem; outline:none; margin-bottom:1.2rem;
+}
+.pd-search-input:focus { border-color:#7c5cff; }
+.pd-empty { color:#505878; font-size:.85rem; padding:1rem 0; }
+.pd-catalog-list { max-height: 480px; overflow-y:auto; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="playlist-header">
+    <div class="playlist-cover"><i class="fa-solid fa-list-ul"></i></div>
+    <div>
+        <h1>{{ playlist.nombrePlaylist }}</h1>
+        <p id="songCountLabel">{{ canciones_en_playlist|length }} canciones</p>
+    </div>
+</div>
+
+<div class="pd-content">
+    <div class="pd-section-title">🎵 Canciones en esta playlist</div>
+    <div id="playlistSongsList">
+        {% for c in canciones_en_playlist %}
+        <div class="pd-song-row" data-row-cancion-id="{{ c.CancionId }}">
+            <div class="pd-song-icon">🎶</div>
+            <div class="pd-song-info cancion-clickable"
+                 data-id="{{ c.CancionId }}" data-title="{{ c.Cancion }}"
+                 data-artist="{{ c.Artista|default:'Varios Artistas' }}"
+                 data-artist-id="{{ c.ArtistaId }}" data-duration="{{ c.Duracion|default:'00:03:00' }}">
+                <div class="pd-song-title">{{ c.Cancion }}</div>
+                <div class="pd-song-artist">{{ c.Artista }}</div>
+            </div>
+            <button class="pd-remove-btn" title="Quitar de la playlist" data-remove-id="{{ c.CancionId }}">
+                <i class="fa-solid fa-xmark"></i>
+            </button>
+        </div>
+        {% empty %}
+        <p class="pd-empty" id="emptyPlaylistMsg">Aún no has agregado canciones. Búscalas abajo y dale ➕.</p>
+        {% endfor %}
+    </div>
+
+    <div class="pd-section-title" style="margin-top:2.5rem;">➕ Agregar canciones</div>
+    <input type="text" class="pd-search-input" id="catalogSearchInput" placeholder="Buscar en todo el catálogo...">
+    <div class="pd-catalog-list" id="catalogList">
+        {% for c in catalogo_completo %}
+        <div class="pd-song-row" data-catalog-row data-search-text="{{ c.Cancion|lower }} {{ c.Artista|lower }}">
+            <div class="pd-song-icon">🎶</div>
+            <div class="pd-song-info">
+                <div class="pd-song-title">{{ c.Cancion }}</div>
+                <div class="pd-song-artist">{{ c.Artista }}</div>
+            </div>
+            <button class="pd-add-btn {% if c.CancionId in canciones_en_playlist_ids %}added{% endif %}"
+                    data-catalog-add-id="{{ c.CancionId }}">
+                <i class="fa-solid {% if c.CancionId in canciones_en_playlist_ids %}fa-check{% else %}fa-plus{% endif %}"></i>
+            </button>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const PLAYLIST_ID = Number('{{ playlist.playlistID }}');
+
+// ── ENGANCHAR CLICS DE LAS CANCIONES YA EN LA PLAYLIST ──
+document.querySelectorAll('#playlistSongsList .cancion-clickable[data-id]').forEach(el => {
+    el.addEventListener('click', () => {
+        simularCancion(el.dataset.id, el.dataset.title, el.dataset.artist, el.dataset.duration, el.dataset.artistId);
+    });
+});
+
+// ── QUITAR CANCIÓN ──────────────────────────────────────
+function enlazarBotonQuitar(btn) {
+    btn.addEventListener('click', () => {
+        const cancionId = btn.dataset.removeId;
+        fetch("{% url 'Main:quitar_cancion_de_playlist' %}", {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrftoken },
+            body: JSON.stringify({ playlistId: PLAYLIST_ID, cancionId: cancionId })
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (data.ok) {
+                btn.closest('.pd-song-row').remove();
+                const catalogBtn = document.querySelector(`[data-catalog-add-id="${cancionId}"]`);
+                if (catalogBtn) {
+                    catalogBtn.classList.remove('added');
+                    catalogBtn.innerHTML = '<i class="fa-solid fa-plus"></i>';
+                }
+                actualizarContador();
+            }
+        });
+    });
+}
+document.querySelectorAll('.pd-remove-btn[data-remove-id]').forEach(enlazarBotonQuitar);
+
+function actualizarContador() {
+    const count = document.querySelectorAll('#playlistSongsList .pd-song-row').length;
+    document.getElementById('songCountLabel').textContent = `${count} canciones`;
+    if (count === 0 && !document.getElementById('emptyPlaylistMsg')) {
+        const p = document.createElement('p');
+        p.className = 'pd-empty';
+        p.id = 'emptyPlaylistMsg';
+        p.textContent = 'Aún no has agregado canciones. Búscalas abajo y dale ➕.';
+        document.getElementById('playlistSongsList').appendChild(p);
+    }
+}
+
+// ── AGREGAR CANCIÓN DESDE EL CATÁLOGO ───────────────────
+document.querySelectorAll('.pd-add-btn[data-catalog-add-id]').forEach(btn => {
+    btn.addEventListener('click', () => {
+        if (btn.classList.contains('added')) return;
+        const cancionId = btn.dataset.catalogAddId;
+        const row = btn.closest('.pd-song-row');
+        const titulo = row.querySelector('.pd-song-title').textContent;
+        const artista = row.querySelector('.pd-song-artist').textContent;
+
+        fetch("{% url 'Main:agregar_cancion_a_playlist' %}", {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrftoken },
+            body: JSON.stringify({ playlistId: PLAYLIST_ID, cancionId: cancionId })
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (!data.ok) return;
+            btn.classList.add('added');
+            btn.innerHTML = '<i class="fa-solid fa-check"></i>';
+
+            const emptyMsg = document.getElementById('emptyPlaylistMsg');
+            if (emptyMsg) emptyMsg.remove();
+
+            const newRow = document.createElement('div');
+            newRow.className = 'pd-song-row';
+            newRow.dataset.rowCancionId = cancionId;
+            newRow.innerHTML = `
+                <div class="pd-song-icon">🎶</div>
+                <div class="pd-song-info">
+                    <div class="pd-song-title">${titulo}</div>
+                    <div class="pd-song-artist">${artista}</div>
+                </div>
+                <button class="pd-remove-btn" data-remove-id="${cancionId}"><i class="fa-solid fa-xmark"></i></button>
+            `;
+            enlazarBotonQuitar(newRow.querySelector('.pd-remove-btn'));
+            document.getElementById('playlistSongsList').appendChild(newRow);
+            actualizarContador();
+        });
+    });
+});
+
+// ── FILTRO DE BÚSQUEDA EN EL CATÁLOGO (cliente, instantáneo) ──
+document.getElementById('catalogSearchInput').addEventListener('input', function() {
+    const query = this.value.toLowerCase().trim();
+    document.querySelectorAll('#catalogList [data-catalog-row]').forEach(row => {
+        row.style.display = row.dataset.searchText.includes(query) ? 'flex' : 'none';
+    });
+});
+</script>
+{% endblock %}
