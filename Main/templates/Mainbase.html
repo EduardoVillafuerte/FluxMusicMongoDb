@@ -440,10 +440,11 @@
     </div>
 
     <div class="player-bar" id="playerBar">
+        <audio id="audioPlayer" preload="none"></audio>
         <div id="fullPlayer" style="position: fixed; top: 0; left: 0; width: 100%; height: calc(100vh - 90px); background: var(--bg); z-index: 2000; padding: 2rem; overflow-y: auto;">
             <button onclick="cerrarFullPlayer()" style="background:none; border:none; color:white; font-size:2rem;"><i class="fa-solid fa-chevron-down"></i></button>
             <div style="display: flex; justify-content: center; align-items: center; height: 80vh; flex-direction: column;">
-                <div id="fullCover" style="width: 300px; height: 300px; border-radius: 20px; background: linear-gradient(135deg, #141826, #1c2030); display:flex; align-items:center; justify-content:center; font-size: 6rem;">🎵</div>
+                <div id="fullCover" style="width: 300px; height: 300px; border-radius: 20px; background: linear-gradient(135deg, #141826, #1c2030); display:flex; align-items:center; justify-content:center; font-size: 6rem; background-size: cover; background-position: center;">🎵</div>
                 <h1 id="fullTitle" style="margin-top: 20px;">Título</h1>
                 <h3 id="fullArtist" style="color: var(--muted);">Artista</h3>
                 <button id="followArtistBtn" class="follow-artist-btn" data-artist-id="">
@@ -494,102 +495,6 @@
         }
         const csrftoken = getCookie('csrftoken');
         let artistasSeguidos = JSON.parse('{{ artistas_seguidos_ids|escapejs }}');
-
-        // ── SIMULADOR DEL REPRODUCTOR ─────────────────────
-        let isPlaying = false;
-        let progressPercent = 0;
-        let simInterval;
-        let totalDuration = 225;
-
-        function parseDuracion(str) {
-            if (!str) return 225;
-            const partes = str.split(':').map(Number);
-            if (partes.length === 3) return partes[0] * 3600 + partes[1] * 60 + partes[2];
-            if (partes.length === 2) return partes[0] * 60 + partes[1];
-            return 225;
-        }
-
-        function formatTime(seconds) {
-            const m = Math.floor(seconds / 60);
-            const s = Math.floor(seconds % 60);
-            return `${m}:${s < 10 ? '0' : ''}${s}`;
-        }
-
-        function togglePlay() {
-            const playIcon = document.getElementById('playIcon');
-            const progressFill = document.getElementById('progressFill');
-            const currentTimeEl = document.getElementById('currentTime');
-            const cover = document.getElementById('fullCover');
-
-            isPlaying = !isPlaying;
-
-            if (isPlaying) {
-                playIcon.classList.remove('fa-play');
-                playIcon.classList.add('fa-pause');
-                cover.classList.add('playing');
-
-                const stepPercent = 100 / totalDuration;
-                simInterval = setInterval(() => {
-                    progressPercent += stepPercent;
-                    if (progressPercent > 100) progressPercent = 0;
-
-                    progressFill.style.width = `${progressPercent}%`;
-                    let currentSec = (progressPercent / 100) * totalDuration;
-                    currentTimeEl.textContent = formatTime(currentSec);
-                }, 1000);
-            } else {
-                playIcon.classList.remove('fa-pause');
-                playIcon.classList.add('fa-play');
-                cover.classList.remove('playing');
-                clearInterval(simInterval);
-            }
-        }
-
-        function abrirFullPlayer() {
-            document.getElementById('fullPlayer').classList.add('active');
-        }
-
-        function cerrarFullPlayer() {
-            document.getElementById('fullPlayer').classList.remove('active');
-        }
-
-        // ── REPRODUCIR CANCIÓN ─────────────────────────────
-        window.simularCancion = function(cancionId, titulo, artista, duracionStr, artistaId) {
-            totalDuration = parseDuracion(duracionStr);
-
-            document.getElementById('playerTitle').textContent = titulo;
-            document.getElementById('playerArtist').textContent = artista;
-            document.getElementById('fullTitle').textContent = titulo;
-            document.getElementById('fullArtist').textContent = artista;
-            document.getElementById('totalTime').textContent = formatTime(totalDuration);
-
-            const followBtn = document.getElementById('followArtistBtn');
-            followBtn.dataset.artistId = artistaId || '';
-
-            // 🔑 NUEVO: revisa si ya sigues a este artista
-            if (artistasSeguidos.includes(parseInt(artistaId))) {
-                followBtn.classList.add('following');
-                followBtn.innerHTML = '<i class="fa-solid fa-check"></i> Siguiendo';
-            } else {
-                followBtn.classList.remove('following');
-                followBtn.innerHTML = '<i class="fa-solid fa-user-plus"></i> Seguir';
-            }
-
-            progressPercent = 0;
-            document.getElementById('progressFill').style.width = '0%';
-            document.getElementById('currentTime').textContent = '0:00';
-
-            abrirFullPlayer();
-            if (!isPlaying) {
-                togglePlay();
-            } else {
-                clearInterval(simInterval);
-                isPlaying = false;
-                togglePlay();
-            }
-
-            registrarReproduccion(cancionId, titulo, artista, duracionStr, artistaId);
-        };
 
         // ── HISTORIAL EN VIVO ───────────────────────────────
         function registrarReproduccion(cancionId, titulo, artista, duracionStr, artistaId) {
@@ -768,6 +673,143 @@
         });
 
 
+        
+
+        // ── REPRODUCTOR CON AUDIO REAL (iTunes) ────────────────
+const audioPlayer = document.getElementById('audioPlayer');
+let isPlaying = false;
+let itunesCache = {}; // evita re-buscar la misma canción dos veces
+
+function formatTime(seconds) {
+    if (!isFinite(seconds) || seconds < 0) return '0:00';
+    const m = Math.floor(seconds / 60);
+    const s = Math.floor(seconds % 60);
+    return `${m}:${s < 10 ? '0' : ''}${s}`;
+}
+
+async function buscarPreviewItunes(titulo, artista) {
+    const cacheKey = `${titulo}|${artista}`;
+    if (itunesCache[cacheKey]) return itunesCache[cacheKey];
+
+    const query = encodeURIComponent(`${titulo} ${artista}`);
+    try {
+        const res = await fetch(`https://itunes.apple.com/search?term=${query}&media=music&limit=1`);
+        const data = await res.json();
+        if (data.results && data.results.length > 0) {
+            const resultado = {
+                previewUrl: data.results[0].previewUrl,
+                artwork: data.results[0].artworkUrl100.replace('100x100', '400x400')
+            };
+            itunesCache[cacheKey] = resultado;
+            return resultado;
+        }
+    } catch (err) {
+        console.error('Error buscando en iTunes:', err);
+    }
+    return null;
+}
+
+function togglePlay() {
+    const playIcon = document.getElementById('playIcon');
+    const cover = document.getElementById('fullCover');
+
+    if (audioPlayer.paused) {
+        audioPlayer.play().catch(err => console.error('Error reproduciendo audio:', err));
+        isPlaying = true;
+        playIcon.classList.remove('fa-play');
+        playIcon.classList.add('fa-pause');
+        cover.classList.add('playing');
+    } else {
+        audioPlayer.pause();
+        isPlaying = false;
+        playIcon.classList.remove('fa-pause');
+        playIcon.classList.add('fa-play');
+        cover.classList.remove('playing');
+    }
+}
+
+function abrirFullPlayer() {
+    document.getElementById('fullPlayer').classList.add('active');
+}
+
+function cerrarFullPlayer() {
+    document.getElementById('fullPlayer').classList.remove('active');
+}
+
+// Sincroniza la barra de progreso con el audio real
+audioPlayer.addEventListener('timeupdate', () => {
+    if (!audioPlayer.duration) return;
+    const pct = (audioPlayer.currentTime / audioPlayer.duration) * 100;
+    document.getElementById('progressFill').style.width = `${pct}%`;
+    document.getElementById('currentTime').textContent = formatTime(audioPlayer.currentTime);
+});
+
+audioPlayer.addEventListener('loadedmetadata', () => {
+    document.getElementById('totalTime').textContent = formatTime(audioPlayer.duration);
+});
+
+audioPlayer.addEventListener('ended', () => {
+    const playIcon = document.getElementById('playIcon');
+    playIcon.classList.remove('fa-pause');
+    playIcon.classList.add('fa-play');
+    document.getElementById('fullCover').classList.remove('playing');
+    isPlaying = false;
+});
+
+// ── REPRODUCIR CANCIÓN (busca en iTunes + reproduce real) ──
+window.simularCancion = async function(cancionId, titulo, artista, duracionStr, artistaId) {
+    document.getElementById('playerTitle').textContent = titulo;
+    document.getElementById('playerArtist').textContent = artista;
+    document.getElementById('fullTitle').textContent = titulo;
+    document.getElementById('fullArtist').textContent = artista;
+    document.getElementById('totalTime').textContent = duracionStr ? duracionStr.replace(/^00:/, '') : '3:45';
+    document.getElementById('currentTime').textContent = '0:00';
+    document.getElementById('progressFill').style.width = '0%';
+
+    const followBtn = document.getElementById('followArtistBtn');
+    followBtn.dataset.artistId = artistaId || '';
+    if (artistasSeguidos.includes(parseInt(artistaId))) {
+        followBtn.classList.add('following');
+        followBtn.innerHTML = '<i class="fa-solid fa-check"></i> Siguiendo';
+    } else {
+        followBtn.classList.remove('following');
+        followBtn.innerHTML = '<i class="fa-solid fa-user-plus"></i> Seguir';
+    }
+
+    const cover = document.getElementById('fullCover');
+    cover.style.backgroundImage = 'none';
+    cover.textContent = '🎵';
+    cover.classList.remove('playing');
+
+    abrirFullPlayer();
+
+    // Muestra "buscando..." mientras consulta iTunes
+    document.getElementById('playerTitle').textContent = `Buscando: ${titulo}...`;
+
+    const resultado = await buscarPreviewItunes(titulo, artista);
+
+    document.getElementById('playerTitle').textContent = titulo;
+
+    if (resultado && resultado.previewUrl) {
+        audioPlayer.src = resultado.previewUrl;
+        cover.style.backgroundImage = `url('${resultado.artwork}')`;
+        cover.textContent = '';
+        audioPlayer.play().catch(err => console.error('Error al reproducir:', err));
+        isPlaying = true;
+        document.getElementById('playIcon').classList.remove('fa-play');
+        document.getElementById('playIcon').classList.add('fa-pause');
+        cover.classList.add('playing');
+    } else {
+        console.warn(`No se encontró preview en iTunes para "${titulo}" - ${artista}`);
+        audioPlayer.pause();
+        audioPlayer.removeAttribute('src');
+        isPlaying = false;
+        document.getElementById('playIcon').classList.remove('fa-pause');
+        document.getElementById('playIcon').classList.add('fa-play');
+    }
+
+    registrarReproduccion(cancionId, titulo, artista, duracionStr, artistaId);
+};
 
     </script>
     {% block extra_js %}{% endblock %}
