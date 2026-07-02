@@ -135,6 +135,8 @@
             cursor: pointer; font-size: 1.1rem; transition: 0.2s; margin-left: 10px;
         }
         .add-btn:hover { color: var(--teal); transform: scale(1.1); }
+        .add-btn.liked { color: #ff5d8f; }
+        .add-btn.liked:hover { color: #ff5d8f; }
 
         .player-center { flex: 2; display: flex; flex-direction: column; align-items: center; gap: 0.5rem; }
         .player-controls { display: flex; align-items: center; gap: 1.5rem; }
@@ -337,34 +339,34 @@
 
         <nav class="sidebar-nav">
             <span class="nav-label">Menú</span>
-            <a href="{% url 'Main:dashboard_negocio' %}" class="nav-item active">
+            <a href="{% url 'Main:dashboard_negocio' %}" class="nav-item {% if request.resolver_match.url_name == 'dashboard_negocio' %}active{% endif %}">
                 <i class="fa-solid fa-house"></i> <span>Inicio</span>
             </a>
 
             {% if request.session.plan_tipo != 'Premium' %}
-            <a href="{% url 'Main:ver_planes' %}" class="nav-item">
+            <a href="{% url 'Main:ver_planes' %}" class="nav-item {% if request.resolver_match.url_name == 'ver_planes' %}active{% endif %}">
                 <i class="fa-solid fa-crown"></i> <span>Planes</span>
             </a>
             {% endif %}
 
             <span class="nav-label">Tú</span>
-            <a href="{% url 'Main:mi_biblioteca' %}" class="nav-item" style="color: #2fdbb7; font-weight: 600; text-shadow: 0 0 8px rgba(47, 219, 183, 0.4);">
+            <a href="{% url 'Main:mi_biblioteca' %}" class="nav-item {% if request.resolver_match.url_name == 'mi_biblioteca' %}active{% endif %}" style="color: #2fdbb7; font-weight: 600; text-shadow: 0 0 8px rgba(47, 219, 183, 0.4);">
                 <i class="fa-regular fa-heart"></i> <span>Tu Biblioteca</span>
             </a>
 
             {% if request.session.rol == 'Artista' %}
             <span class="nav-label" style="margin-top: 20px;">Artista</span>
-            <a href="{% url 'Main:subir_cancion' %}" class="nav-item">
+            <a href="{% url 'Main:subir_cancion' %}" class="nav-item {% if request.resolver_match.url_name == 'subir_cancion' %}active{% endif %}">
                 <i class="fa-solid fa-cloud-arrow-up"></i> <span>Subir Canción</span>
             </a>
-            <a href="{% url 'Main:estadisticas_artista' %}" class="nav-item">
+            <a href="{% url 'Main:estadisticas_artista' %}" class="nav-item {% if request.resolver_match.url_name == 'estadisticas_artista' %}active{% endif %}">
                 <i class="fa-solid fa-chart-line"></i> <span>Mis Estadísticas</span>
             </a>
             {% endif %}
 
             {% if request.session.rol == 'Discografica' %}
             <span class="nav-label" style="margin-top: 20px;">Discográfica</span>
-            <a href="{% url 'Main:panel_discografica' %}" class="nav-item">
+            <a href="{% url 'Main:panel_discografica' %}" class="nav-item {% if request.resolver_match.url_name == 'panel_discografica' %}active{% endif %}">
                 <i class="fa-solid fa-link"></i> <span>Vincular Artistas</span>
             </a>
             {% endif %}
@@ -372,7 +374,7 @@
             <span class="nav-label" style="margin-top: 20px;">Tus Playlists</span>
             <div class="playlist-list">
                 {% for playlist in playlists %}
-                    <a href="{% url 'Main:playlist_detail' playlist.PlaylistID %}" class="nav-item">
+                    <a href="{% url 'Main:playlist_detail' playlist.PlaylistID %}" class="nav-item {% if request.resolver_match.url_name == 'playlist_detail' and playlist.PlaylistID|stringformat:'s' == request.resolver_match.kwargs.playlist_id|stringformat:'s' %}active{% endif %}">
                         <i class="fa-solid fa-music"></i> <span>{{ playlist.Playlist }}</span>
                     </a>
                 {% empty %}
@@ -468,7 +470,9 @@
                 <span class="player-title" id="playerTitle">Elige una canción</span>
                 <span class="player-artist" id="playerArtist">FluxMusic</span>
             </div>
-            <button class="add-btn" title="Agregar a Playlist"><i class="fa-regular fa-heart"></i></button>
+            <button class="add-btn" id="likeCurrentBtn" title="Me gusta" data-cancion-id="">
+                <i class="fa-regular fa-heart" id="likeCurrentIcon"></i>
+            </button>
         </div>
         <div class="player-center">
             <div class="player-controls">
@@ -504,7 +508,8 @@
             return null;
         }
         const csrftoken = getCookie('csrftoken');
-        let artistasSeguidos = JSON.parse('{{ artistas_seguidos_ids|escapejs }}');
+        let artistasSeguidos = JSON.parse('{{ artistas_seguidos_ids|default:"[]"|escapejs }}');
+        let cancionesGustadas = JSON.parse('{{ canciones_gustadas_ids|default:"[]"|escapejs }}');
 
         // ── HISTORIAL EN VIVO ───────────────────────────────
         function registrarReproduccion(cancionId, titulo, artista, duracionStr, artistaId) {
@@ -589,10 +594,63 @@
                 if (data.ok) {
                     btnEl.classList.add('following');
                     btnEl.innerHTML = '<i class="fa-solid fa-check"></i> Siguiendo';
-                    artistasSeguidos.push(parseInt(artistaId)); // 🔑 recuerda en memoria
+                    if (!artistasSeguidos.includes(parseInt(artistaId))) {
+                        artistasSeguidos.push(parseInt(artistaId)); // 🔑 recuerda en memoria
+                    }
                 }
             })
             .catch(err => console.error('Error siguiendo artista:', err));
+        }
+
+        // ── DEJAR DE SEGUIR ARTISTA ──────────────────────────
+        function dejarDeSeguirArtista(artistaId, btnEl) {
+            if (!artistaId) return;
+            fetch("{% url 'Main:dejar_seguir_artista' %}", {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrftoken },
+                body: JSON.stringify({ artistaId: artistaId })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.ok) {
+                    btnEl.classList.remove('following');
+                    btnEl.innerHTML = '<i class="fa-solid fa-user-plus"></i> Seguir';
+                    artistasSeguidos = artistasSeguidos.filter(id => id !== parseInt(artistaId));
+                }
+            })
+            .catch(err => console.error('Error dejando de seguir artista:', err));
+        }
+
+        // ── LIKE / DISLIKE DE LA CANCIÓN ACTUAL ──────────────
+        function toggleLikeCancion(cancionId, btnEl) {
+            if (!cancionId) return;
+            const icon = document.getElementById('likeCurrentIcon');
+            const yaGustada = cancionesGustadas.includes(parseInt(cancionId));
+            const url = yaGustada
+                ? "{% url 'Main:quitar_de_biblioteca' %}"
+                : "{% url 'Main:agregar_a_biblioteca' %}";
+
+            fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrftoken },
+                body: JSON.stringify({ cancionId: cancionId })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (!data.ok) return;
+                if (yaGustada) {
+                    cancionesGustadas = cancionesGustadas.filter(id => id !== parseInt(cancionId));
+                    icon.classList.remove('fa-solid');
+                    icon.classList.add('fa-regular');
+                    btnEl.classList.remove('liked');
+                } else {
+                    cancionesGustadas.push(parseInt(cancionId));
+                    icon.classList.remove('fa-regular');
+                    icon.classList.add('fa-solid');
+                    btnEl.classList.add('liked');
+                }
+            })
+            .catch(err => console.error('Error al dar/quitar me gusta:', err));
         }
         // ── ENGANCHAR EVENTOS ───────────────────────────────
         function attachCancionListeners() {
@@ -611,7 +669,15 @@
         attachCancionListeners();
 
         document.getElementById('followArtistBtn').addEventListener('click', function() {
-            seguirArtista(this.dataset.artistId, this);
+            if (this.classList.contains('following')) {
+                dejarDeSeguirArtista(this.dataset.artistId, this);
+            } else {
+                seguirArtista(this.dataset.artistId, this);
+            }
+        });
+
+        document.getElementById('likeCurrentBtn').addEventListener('click', function() {
+            toggleLikeCancion(this.dataset.cancionId, this);
         });
 
         document.getElementById('toggleSidebar').addEventListener('click', function() {
@@ -784,6 +850,19 @@ window.simularCancion = async function(cancionId, titulo, artista, duracionStr, 
     } else {
         followBtn.classList.remove('following');
         followBtn.innerHTML = '<i class="fa-solid fa-user-plus"></i> Seguir';
+    }
+
+    const likeBtn = document.getElementById('likeCurrentBtn');
+    const likeIcon = document.getElementById('likeCurrentIcon');
+    likeBtn.dataset.cancionId = cancionId || '';
+    if (cancionesGustadas.includes(parseInt(cancionId))) {
+        likeBtn.classList.add('liked');
+        likeIcon.classList.remove('fa-regular');
+        likeIcon.classList.add('fa-solid');
+    } else {
+        likeBtn.classList.remove('liked');
+        likeIcon.classList.remove('fa-solid');
+        likeIcon.classList.add('fa-regular');
     }
 
     const cover = document.getElementById('fullCover');

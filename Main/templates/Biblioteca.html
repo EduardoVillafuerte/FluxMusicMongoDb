@@ -117,6 +117,32 @@
         font-size: 0.85rem;
         margin: 0;
     }
+
+    .unlike-btn, .unfollow-btn {
+        position: absolute; top: .6rem; right: .6rem;
+        width: 26px; height: 26px; border-radius: 50%;
+        background: rgba(255,80,80,.12); color: #ff6b6b; border: 1px solid rgba(255,80,80,.3);
+        display: flex; align-items: center; justify-content: center;
+        font-size: .7rem; cursor: pointer; transition: .2s; z-index: 2;
+    }
+    .unlike-btn:hover, .unfollow-btn:hover { background: #ff6b6b; color: #fff; }
+
+    .artista-card:hover { border-color: #bc42ca; box-shadow: 0 0 15px rgba(188,66,202,.2); }
+
+    .artist-song-row {
+        display: flex; align-items: center; gap: 1rem;
+        padding: .75rem 1rem; border-radius: 10px;
+        background: #222630; border: 1px solid #2a2f3a;
+        margin-bottom: .6rem; cursor: pointer; transition: .2s;
+    }
+    .artist-song-row:hover { border-color: #7c5cff; background: #262b38; }
+    .artist-song-icon {
+        width: 36px; height: 36px; border-radius: 8px; background: #141826;
+        display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+    }
+    .artist-song-title { color: #dde3f0; font-weight: 600; font-size: .88rem; }
+    .artist-song-duration { color: #505878; font-size: .75rem; margin-left: auto; }
+    .artist-songs-empty { color: #505878; font-size: .85rem; padding: 1rem 0; }
 </style>
 {% endblock %}
 
@@ -152,11 +178,17 @@
             <div class="tab-content" id="libraryTabsContent">
 
                 <div class="tab-pane fade show active" id="gustas" role="tabpanel">
-                    <div class="row g-4">
+                    <div class="row g-4" id="gustasGrid">
                         {% for c in mis_gustas %}
-                        <div class="col-6 col-md-4 col-lg-3 col-xl-2">
-                            <div class="library-card">
-                                <div class="library-icon" style="color:#2fdbb7;">
+                        <div class="col-6 col-md-4 col-lg-3 col-xl-2" data-gusta-row data-cancion-id="{{ c.CancionId }}">
+                            <div class="library-card" style="position:relative;">
+                                <button class="unlike-btn" title="Quitar Me Gusta" data-unlike-id="{{ c.CancionId }}">
+                                    <i class="fa-solid fa-xmark"></i>
+                                </button>
+                                <div class="library-icon cancion-clickable" style="color:#2fdbb7; cursor:pointer;"
+                                     data-id="{{ c.CancionId }}" data-title="{{ c.Cancion }}"
+                                     data-artist="{{ c.Artista|default:'Varios Artistas' }}"
+                                     data-artist-id="{{ c.ArtistaId }}" data-duration="{{ c.Duracion|default:'00:03:00' }}">
                                     <i class="fa-solid fa-heart"></i>
                                 </div>
                                 <h5 class="library-title">{{ c.Cancion }}</h5>
@@ -164,7 +196,7 @@
                             </div>
                         </div>
                         {% empty %}
-                        <div class="col-12 text-center py-5">
+                        <div class="col-12 text-center py-5" id="gustasEmptyState">
                             <p class="subtitle-text">Aún no le has dado "Me gusta" a ninguna canción. Ve al Inicio y dale al ➕ en tus recomendaciones.</p>
                         </div>
                         {% endfor %}
@@ -238,10 +270,14 @@
                 </div>
 
                 <div class="tab-pane fade" id="artistas" role="tabpanel">
-                    <div class="row g-4">
+                    <div class="row g-4" id="artistasGrid">
                         {% for art in artistas %}
-                        <div class="col-6 col-md-4 col-lg-3 col-xl-2">
-                            <div class="library-card" style="border-radius: 30px;">
+                        <div class="col-6 col-md-4 col-lg-3 col-xl-2" data-artista-row data-artista-id="{{ art.ArtistaId }}">
+                            <div class="library-card artista-card" style="border-radius: 30px; position:relative; cursor:pointer;"
+                                 data-artist-select data-artista-id="{{ art.ArtistaId }}" data-artista-nombre="{{ art.Artista_Seguido }}">
+                                <button class="unfollow-btn" title="Dejar de seguir" data-unfollow-id="{{ art.ArtistaId }}">
+                                    <i class="fa-solid fa-user-minus"></i>
+                                </button>
                                 <div class="library-icon" style="color: #bc42ca;">
                                     <i class="fa-solid fa-microphone-lines"></i>
                                 </div>
@@ -250,10 +286,21 @@
                             </div>
                         </div>
                         {% empty %}
-                        <div class="col-12 text-center py-5">
+                        <div class="col-12 text-center py-5" id="artistasEmptyState">
                             <p class="subtitle-text">Aún no sigues a ningún artista.</p>
                         </div>
                         {% endfor %}
+                    </div>
+
+                    <!-- Canciones del artista seleccionado -->
+                    <div id="artistaSongsPanel" style="display:none; margin-top:2rem;">
+                        <div style="display:flex; align-items:center; gap:.8rem; margin-bottom:1rem;">
+                            <button id="btnCerrarArtistaSongs" style="background:transparent; border:none; color:#8a94a6; font-size:1.2rem; cursor:pointer;">
+                                <i class="fa-solid fa-arrow-left"></i>
+                            </button>
+                            <h5 style="color:#fff; margin:0;">Canciones de <span id="artistaSongsNombre" style="color:#2fdbb7;"></span></h5>
+                        </div>
+                        <div id="artistaSongsList"></div>
                     </div>
                 </div>
 
@@ -315,6 +362,128 @@
 
         btnConfirmar.addEventListener('click', confirmarCreacion);
         input.addEventListener('keydown', (e) => { if (e.key === 'Enter') confirmarCreacion(); });
+
+        // ── QUITAR "ME GUSTA" (dislike) ─────────────────────
+        document.querySelectorAll('.unlike-btn[data-unlike-id]').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const cancionId = btn.dataset.unlikeId;
+                fetch("{% url 'Main:quitar_de_biblioteca' %}", {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrftoken },
+                    body: JSON.stringify({ cancionId: cancionId })
+                })
+                .then(res => res.json())
+                .then(data => {
+                    if (!data.ok) return;
+                    if (typeof cancionesGustadas !== 'undefined') {
+                        cancionesGustadas = cancionesGustadas.filter(id => id !== parseInt(cancionId));
+                    }
+                    const row = btn.closest('[data-gusta-row]');
+                    if (row) {
+                        row.style.transition = 'opacity .25s ease';
+                        row.style.opacity = '0';
+                        setTimeout(() => {
+                            row.remove();
+                            const grid = document.getElementById('gustasGrid');
+                            if (grid && !grid.querySelector('[data-gusta-row]') && !document.getElementById('gustasEmptyState')) {
+                                grid.insertAdjacentHTML('beforeend', `
+                                    <div class="col-12 text-center py-5" id="gustasEmptyState">
+                                        <p class="subtitle-text">Aún no le has dado "Me gusta" a ninguna canción. Ve al Inicio y dale al ➕ en tus recomendaciones.</p>
+                                    </div>`);
+                            }
+                        }, 250);
+                    }
+                })
+                .catch(err => console.error('Error quitando me gusta:', err));
+            });
+        });
+
+        // ── DEJAR DE SEGUIR ARTISTA ──────────────────────────
+        document.querySelectorAll('.unfollow-btn[data-unfollow-id]').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const artistaId = btn.dataset.unfollowId;
+                fetch("{% url 'Main:dejar_seguir_artista' %}", {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrftoken },
+                    body: JSON.stringify({ artistaId: artistaId })
+                })
+                .then(res => res.json())
+                .then(data => {
+                    if (!data.ok) return;
+                    if (typeof artistasSeguidos !== 'undefined') {
+                        artistasSeguidos = artistasSeguidos.filter(id => id !== parseInt(artistaId));
+                    }
+                    const row = btn.closest('[data-artista-row]');
+                    if (row) {
+                        row.style.transition = 'opacity .25s ease';
+                        row.style.opacity = '0';
+                        setTimeout(() => {
+                            row.remove();
+                            const grid = document.getElementById('artistasGrid');
+                            if (grid && !grid.querySelector('[data-artista-row]') && !document.getElementById('artistasEmptyState')) {
+                                grid.insertAdjacentHTML('beforeend', `
+                                    <div class="col-12 text-center py-5" id="artistasEmptyState">
+                                        <p class="subtitle-text">Aún no sigues a ningún artista.</p>
+                                    </div>`);
+                            }
+                        }, 250);
+                    }
+                    document.getElementById('artistaSongsPanel').style.display = 'none';
+                })
+                .catch(err => console.error('Error dejando de seguir:', err));
+            });
+        });
+
+        // ── AL SELECCIONAR UN ARTISTA: MOSTRAR SUS CANCIONES ──
+        const artistaSongsPanel = document.getElementById('artistaSongsPanel');
+        const artistaSongsList = document.getElementById('artistaSongsList');
+        const artistaSongsNombre = document.getElementById('artistaSongsNombre');
+
+        document.querySelectorAll('[data-artist-select]').forEach(card => {
+            card.addEventListener('click', () => {
+                const artistaId = card.dataset.artistaId;
+                const nombre = card.dataset.artistaNombre;
+                if (!artistaId) return;
+
+                artistaSongsNombre.textContent = nombre;
+                artistaSongsList.innerHTML = '<p class="artist-songs-empty">Cargando canciones...</p>';
+                artistaSongsPanel.style.display = 'block';
+                artistaSongsPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+                fetch(`{% url 'Main:canciones_de_artista' %}?artistaId=${encodeURIComponent(artistaId)}`)
+                    .then(res => res.json())
+                    .then(data => {
+                        artistaSongsList.innerHTML = '';
+                        if (!data.ok || !data.canciones || data.canciones.length === 0) {
+                            artistaSongsList.innerHTML = '<p class="artist-songs-empty">Este artista todavía no tiene canciones publicadas.</p>';
+                            return;
+                        }
+                        data.canciones.forEach(c => {
+                            const row = document.createElement('div');
+                            row.className = 'artist-song-row';
+                            row.innerHTML = `
+                                <div class="artist-song-icon">🎶</div>
+                                <div class="artist-song-title">${c.titulo}</div>
+                                <div class="artist-song-duration">${(c.duracion || '00:03:00').replace(/^00:/, '')}</div>
+                            `;
+                            row.addEventListener('click', () => {
+                                simularCancion(c.cancionId, c.titulo, c.artista, c.duracion, c.artistaId);
+                            });
+                            artistaSongsList.appendChild(row);
+                        });
+                    })
+                    .catch(err => {
+                        console.error('Error cargando canciones del artista:', err);
+                        artistaSongsList.innerHTML = '<p class="artist-songs-empty">No se pudieron cargar las canciones.</p>';
+                    });
+            });
+        });
+
+        document.getElementById('btnCerrarArtistaSongs').addEventListener('click', () => {
+            artistaSongsPanel.style.display = 'none';
+        });
     });
     </script>
     {% endblock %}

@@ -196,6 +196,17 @@ def dashboard_negocio(request):
         except Exception as e:
             print(f"Error calculando ADN musical: {e}")
 
+    canciones_gustadas_ids = []
+    if oyente_id:
+        try:
+            canciones_gustadas_ids = [
+                i['cancionId'] for i in db['interacciones'].find(
+                    {'oyenteId': oyente_id, 'tipoInteraccion': 'Like'}, {'cancionId': 1}
+                )
+            ]
+        except Exception as e:
+            print(f"Error canciones_gustadas_ids: {e}")
+
     context = {
         'nickname': request.session.get('nickname'),
         'role': rol,
@@ -204,6 +215,7 @@ def dashboard_negocio(request):
         'recomendaciones': recomendaciones,
         'historial_reciente': historial_reciente,
         'adn_musical': adn_musical,
+        'canciones_gustadas_ids': json.dumps(canciones_gustadas_ids),
     }
     return render(request, 'Main.html', context)
 
@@ -244,6 +256,7 @@ def mi_biblioteca(request):
             {'$unwind': {'path': '$discograficaData', 'preserveNullAndEmptyArrays': True}},
             {'$project': {
                 'Artista_Seguido': '$artistaData.perfilArtista.nombreProfesional',
+                'ArtistaId': '$artistaData.usuarioId',
                 'Discografica': {'$ifNull': ['$discograficaData.nickname', 'Independiente']}
             }}
         ]))
@@ -263,7 +276,9 @@ def mi_biblioteca(request):
             {'$project': {
                 'CancionId': '$cancionData.cancionId',
                 'Cancion': '$cancionData.tituloCancion',
-                'Artista': '$artistaData.perfilArtista.nombreProfesional'
+                'Duracion': '$cancionData.duracionTotal',
+                'Artista': '$artistaData.perfilArtista.nombreProfesional',
+                'ArtistaId': '$artistaData.usuarioId'
             }}
         ]))
 
@@ -271,10 +286,13 @@ def mi_biblioteca(request):
         print(f"Error al cargar la biblioteca desde MongoDB: {e}")
         messages.error(request, "Hubo un error al cargar tu biblioteca. Inténtalo de nuevo más tarde.")
 
+    canciones_gustadas_ids = [c['CancionId'] for c in mis_gustas]
+
     context = {
         'albumes': albumes,
         'artistas': artistas,
         'mis_gustas': mis_gustas,
+        'canciones_gustadas_ids': json.dumps(canciones_gustadas_ids),
     }
     return render(request, 'Biblioteca.html', context)
 
@@ -388,6 +406,96 @@ def seguir_artista(request):
 
     return JsonResponse({'ok': True, 'mensaje': 'Ahora sigues a este artista'})
 
+
+# ============================================================
+# NUEVO: Dejar de seguir a un artista
+# ============================================================
+def dejar_seguir_artista(request):
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Método no permitido'}, status=405)
+
+    oyente_id = request.session.get('usuario_id')
+    if not oyente_id:
+        return JsonResponse({'error': 'No autenticado'}, status=401)
+
+    try:
+        data = json.loads(request.body)
+        artista_id = int(data.get('artistaId'))
+    except (ValueError, TypeError, json.JSONDecodeError):
+        return JsonResponse({'error': 'artistaId inválido'}, status=400)
+
+    db = get_db()
+    db['interacciones'].delete_one({
+        'oyenteId': oyente_id, 'artistaId': artista_id, 'tipoInteraccion': 'Seguir'
+    })
+
+    return JsonResponse({'ok': True, 'mensaje': 'Has dejado de seguir a este artista'})
+
+
+# ============================================================
+# NUEVO: Quitar una canción de "Tus Me Gustas" (Dislike / quitar Like)
+# ============================================================
+def quitar_de_biblioteca(request):
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Método no permitido'}, status=405)
+
+    oyente_id = request.session.get('usuario_id')
+    if not oyente_id:
+        return JsonResponse({'error': 'No autenticado'}, status=401)
+
+    try:
+        data = json.loads(request.body)
+        cancion_id = int(data.get('cancionId'))
+    except (ValueError, TypeError, json.JSONDecodeError):
+        return JsonResponse({'error': 'cancionId inválido'}, status=400)
+
+    db = get_db()
+    db['interacciones'].delete_one({
+        'oyenteId': oyente_id, 'cancionId': cancion_id, 'tipoInteraccion': 'Like'
+    })
+
+    return JsonResponse({'ok': True, 'mensaje': 'Canción quitada de tu biblioteca'})
+
+
+# ============================================================
+# NUEVO: Obtener las canciones de un artista que sigo (Biblioteca -> tab Artistas)
+# ============================================================
+def canciones_de_artista(request):
+    oyente_id = request.session.get('usuario_id')
+    if not oyente_id:
+        return JsonResponse({'error': 'No autenticado'}, status=401)
+
+    try:
+        artista_id = int(request.GET.get('artistaId'))
+    except (ValueError, TypeError):
+        return JsonResponse({'error': 'artistaId inválido'}, status=400)
+
+    db = get_db()
+    try:
+        canciones = list(db['canciones'].aggregate([
+            {'$lookup': {'from': 'catalogo', 'localField': 'albumId',
+                         'foreignField': 'albumID', 'as': 'albumData'}},
+            {'$unwind': '$albumData'},
+            {'$match': {'albumData.artistaId': artista_id}},
+            {'$lookup': {'from': 'usuarios', 'localField': 'albumData.artistaId',
+                         'foreignField': 'usuarioId', 'as': 'artistaData'}},
+            {'$unwind': '$artistaData'},
+            {'$project': {
+                '_id': 0,
+                'cancionId': '$cancionId',
+                'titulo': '$tituloCancion',
+                'duracion': '$duracionTotal',
+                'artista': '$artistaData.perfilArtista.nombreProfesional',
+                'artistaId': '$artistaData.usuarioId'
+            }}
+        ]))
+    except Exception as e:
+        print(f"Error canciones_de_artista: {e}")
+        canciones = []
+
+    return JsonResponse({'ok': True, 'canciones': canciones})
+
+
 # ============================================================
 # NUEVO: Crear una playlist nueva
 # ============================================================
@@ -491,7 +599,9 @@ def playlist_detail(request, playlist_id):
             }}
         ]))
 
+    # Solo se sugieren canciones que TODAVÍA NO están en esta playlist
     catalogo_completo = list(db['canciones'].aggregate([
+        {'$match': {'cancionId': {'$nin': canciones_ids}}},
         {'$lookup': {'from': 'catalogo', 'localField': 'albumId',
                      'foreignField': 'albumID', 'as': 'albumData'}},
         {'$unwind': '$albumData'},
@@ -501,7 +611,9 @@ def playlist_detail(request, playlist_id):
         {'$project': {
             'CancionId': '$cancionId',
             'Cancion': '$tituloCancion',
-            'Artista': '$artistaData.perfilArtista.nombreProfesional'
+            'Duracion': '$duracionTotal',
+            'Artista': '$artistaData.perfilArtista.nombreProfesional',
+            'ArtistaId': '$artistaData.usuarioId'
         }},
         {'$sort': {'Cancion': 1}}
     ]))
@@ -557,6 +669,34 @@ def quitar_cancion_de_playlist(request):
         {'$pull': {'cancionesIds': cancion_id}}
     )
     return JsonResponse({'ok': True})
+
+
+# ============================================================
+# NUEVO: Eliminar una playlist completa (con confirmación en frontend)
+# ============================================================
+def eliminar_playlist(request):
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Método no permitido'}, status=405)
+
+    oyente_id = request.session.get('usuario_id')
+    if not oyente_id:
+        return JsonResponse({'error': 'No autenticado'}, status=401)
+
+    try:
+        data = json.loads(request.body)
+        playlist_id = int(data.get('playlistId'))
+    except (ValueError, TypeError, json.JSONDecodeError):
+        return JsonResponse({'error': 'playlistId inválido'}, status=400)
+
+    db = get_db()
+    result = db['playlists'].delete_one({
+        'playlistID': playlist_id, 'oyenteId': oyente_id
+    })
+
+    if result.deleted_count == 0:
+        return JsonResponse({'error': 'Playlist no encontrada'}, status=404)
+
+    return JsonResponse({'ok': True, 'mensaje': 'Playlist eliminada correctamente'})
 
 
 # ============================================================

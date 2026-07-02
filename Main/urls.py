@@ -21,4 +21,8 @@ urlpatterns = [
     path('salir-discografica/', views.salir_discografica, name='salir_discografica'),
     path('discografica/panel/', views.panel_discografica, name='panel_discografica'),
     path('discografica/vincular/', views.vincular_artista, name='vincular_artista'),
+    path('dejar-seguir-artista/', views.dejar_seguir_artista, name='dejar_seguir_artista'),
+    path('quitar-de-biblioteca/', views.quitar_de_biblioteca, name='quitar_de_biblioteca'),
+    path('canciones-de-artista/', views.canciones_de_artista, name='canciones_de_artista'),
+    path('eliminar-playlist/', views.eliminar_playlist, name='eliminar_playlist'),
 ]

@@ -36,15 +36,53 @@
 .pd-search-input:focus { border-color:#7c5cff; }
 .pd-empty { color:#505878; font-size:.85rem; padding:1rem 0; }
 .pd-catalog-list { max-height: 480px; overflow-y:auto; }
+
+.pd-delete-playlist-btn {
+    background: rgba(255,80,80,.1); color:#ff6b6b; border:1px solid rgba(255,80,80,.3);
+    padding:.65rem 1.2rem; border-radius:10px; font-weight:600; font-size:.85rem;
+    cursor:pointer; transition:.2s; display:flex; align-items:center; gap:.5rem; flex-shrink:0;
+    white-space:nowrap;
+}
+.pd-delete-playlist-btn:hover { background:#ff6b6b; color:#fff; }
+
+.pd-modal-overlay {
+    position: fixed; inset:0; background: rgba(0,0,0,.65); z-index:3000;
+    display:flex; align-items:center; justify-content:center;
+}
+.pd-modal-box { background:#161a24; border:1px solid #2a2f3a; border-radius:16px; padding:1.8rem; width:90%; max-width:420px; }
+.pd-modal-box h3 { color:#fff; margin-bottom:.8rem; font-weight:700; display:flex; align-items:center; gap:.6rem; font-size:1.05rem; }
+.pd-modal-box p { color:#8892aa; font-size:.88rem; line-height:1.5; margin-bottom:1.4rem; }
+.pd-modal-actions { display:flex; justify-content:flex-end; gap:.7rem; }
+.pd-btn-secondary, .pd-btn-danger {
+    padding:.55rem 1.2rem; border-radius:10px; font-weight:600; font-size:.85rem; cursor:pointer; border:none;
+}
+.pd-btn-secondary { background:transparent; color:#8a94a6; border:1px solid #2a2f3a; }
+.pd-btn-secondary:hover { color:#fff; }
+.pd-btn-danger { background:#ff6b6b; color:#fff; }
+.pd-btn-danger:hover { background:#ff4d4d; }
 </style>
 {% endblock %}
 
 {% block content %}
 <div class="playlist-header">
     <div class="playlist-cover"><i class="fa-solid fa-list-ul"></i></div>
-    <div>
+    <div style="flex:1;">
         <h1>{{ playlist.nombrePlaylist }}</h1>
         <p id="songCountLabel">{{ canciones_en_playlist|length }} canciones</p>
+    </div>
+    <button type="button" class="pd-delete-playlist-btn" id="btnEliminarPlaylist" title="Eliminar playlist">
+        <i class="fa-solid fa-trash"></i> Eliminar playlist
+    </button>
+</div>
+
+<div id="modalEliminarPlaylist" class="pd-modal-overlay" style="display:none;">
+    <div class="pd-modal-box">
+        <h3><i class="fa-solid fa-triangle-exclamation" style="color:#ff6b6b;"></i> ¿Eliminar esta playlist?</h3>
+        <p>Estás a punto de eliminar <strong style="color:#fff;">{{ playlist.nombrePlaylist }}</strong>. Esta acción no se puede deshacer y perderás la lista de canciones que agregaste.</p>
+        <div class="pd-modal-actions">
+            <button type="button" id="btnCancelarEliminarPlaylist" class="pd-btn-secondary">Cancelar</button>
+            <button type="button" id="btnConfirmarEliminarPlaylist" class="pd-btn-danger">Sí, eliminar</button>
+        </div>
     </div>
 </div>
 
@@ -76,15 +114,19 @@
         {% for c in catalogo_completo %}
         <div class="pd-song-row" data-catalog-row data-search-text="{{ c.Cancion|lower }} {{ c.Artista|lower }}">
             <div class="pd-song-icon">🎶</div>
-            <div class="pd-song-info">
+            <div class="pd-song-info cancion-clickable"
+                 data-id="{{ c.CancionId }}" data-title="{{ c.Cancion }}"
+                 data-artist="{{ c.Artista|default:'Varios Artistas' }}"
+                 data-artist-id="{{ c.ArtistaId }}" data-duration="{{ c.Duracion|default:'00:03:00' }}">
                 <div class="pd-song-title">{{ c.Cancion }}</div>
                 <div class="pd-song-artist">{{ c.Artista }}</div>
             </div>
-            <button class="pd-add-btn {% if c.CancionId in canciones_en_playlist_ids %}added{% endif %}"
-                    data-catalog-add-id="{{ c.CancionId }}">
-                <i class="fa-solid {% if c.CancionId in canciones_en_playlist_ids %}fa-check{% else %}fa-plus{% endif %}"></i>
+            <button class="pd-add-btn" data-catalog-add-id="{{ c.CancionId }}">
+                <i class="fa-solid fa-plus"></i>
             </button>
         </div>
+        {% empty %}
+        <p class="pd-empty">Ya agregaste todas las canciones del catálogo a esta playlist. 🎉</p>
         {% endfor %}
     </div>
 </div>
@@ -101,10 +143,21 @@ document.querySelectorAll('#playlistSongsList .cancion-clickable[data-id]').forE
     });
 });
 
+// ── ENGANCHAR CLICS DE LAS CANCIONES DEL CATÁLOGO (reproducir) ──
+document.querySelectorAll('#catalogList .cancion-clickable[data-id]').forEach(el => {
+    el.addEventListener('click', () => {
+        simularCancion(el.dataset.id, el.dataset.title, el.dataset.artist, el.dataset.duration, el.dataset.artistId);
+    });
+});
+
 // ── QUITAR CANCIÓN ──────────────────────────────────────
 function enlazarBotonQuitar(btn) {
     btn.addEventListener('click', () => {
         const cancionId = btn.dataset.removeId;
+        const row = btn.closest('.pd-song-row');
+        const titulo = row.querySelector('.pd-song-title').textContent;
+        const artista = row.querySelector('.pd-song-artist').textContent;
+
         fetch("{% url 'Main:quitar_cancion_de_playlist' %}", {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrftoken },
@@ -112,15 +165,32 @@ function enlazarBotonQuitar(btn) {
         })
         .then(res => res.json())
         .then(data => {
-            if (data.ok) {
-                btn.closest('.pd-song-row').remove();
-                const catalogBtn = document.querySelector(`[data-catalog-add-id="${cancionId}"]`);
-                if (catalogBtn) {
-                    catalogBtn.classList.remove('added');
-                    catalogBtn.innerHTML = '<i class="fa-solid fa-plus"></i>';
-                }
-                actualizarContador();
-            }
+            if (!data.ok) return;
+            row.remove();
+            actualizarContador();
+
+            // Vuelve a estar disponible para sugerir en el catálogo
+            const catalogList = document.getElementById('catalogList');
+            const yaNoTieneFiltro = catalogList.querySelector('.pd-empty');
+            if (yaNoTieneFiltro) catalogList.innerHTML = '';
+
+            const newCatalogRow = document.createElement('div');
+            newCatalogRow.className = 'pd-song-row';
+            newCatalogRow.setAttribute('data-catalog-row', '');
+            newCatalogRow.dataset.searchText = `${titulo.toLowerCase()} ${artista.toLowerCase()}`;
+            newCatalogRow.innerHTML = `
+                <div class="pd-song-icon">🎶</div>
+                <div class="pd-song-info cancion-clickable" data-id="${cancionId}" data-title="${titulo}" data-artist="${artista}">
+                    <div class="pd-song-title">${titulo}</div>
+                    <div class="pd-song-artist">${artista}</div>
+                </div>
+                <button class="pd-add-btn" data-catalog-add-id="${cancionId}"><i class="fa-solid fa-plus"></i></button>
+            `;
+            newCatalogRow.querySelector('.cancion-clickable').addEventListener('click', function() {
+                simularCancion(this.dataset.id, this.dataset.title, this.dataset.artist, this.dataset.duration, this.dataset.artistId);
+            });
+            enlazarBotonAgregar(newCatalogRow.querySelector('.pd-add-btn'));
+            catalogList.appendChild(newCatalogRow);
         });
     });
 }
@@ -139,13 +209,16 @@ function actualizarContador() {
 }
 
 // ── AGREGAR CANCIÓN DESDE EL CATÁLOGO ───────────────────
-document.querySelectorAll('.pd-add-btn[data-catalog-add-id]').forEach(btn => {
-    btn.addEventListener('click', () => {
-        if (btn.classList.contains('added')) return;
+function enlazarBotonAgregar(btn) {
+    btn.addEventListener('click', (e) => {
+        e.stopPropagation();
         const cancionId = btn.dataset.catalogAddId;
         const row = btn.closest('.pd-song-row');
         const titulo = row.querySelector('.pd-song-title').textContent;
         const artista = row.querySelector('.pd-song-artist').textContent;
+        const info = row.querySelector('.cancion-clickable');
+        const artistId = info ? info.dataset.artistId : '';
+        const duration = info ? info.dataset.duration : '00:03:00';
 
         fetch("{% url 'Main:agregar_cancion_a_playlist' %}", {
             method: 'POST',
@@ -155,8 +228,17 @@ document.querySelectorAll('.pd-add-btn[data-catalog-add-id]').forEach(btn => {
         .then(res => res.json())
         .then(data => {
             if (!data.ok) return;
-            btn.classList.add('added');
-            btn.innerHTML = '<i class="fa-solid fa-check"></i>';
+
+            // Ya no se sugiere: se quita del catálogo de "agregar canciones"
+            row.style.transition = 'opacity .2s ease';
+            row.style.opacity = '0';
+            setTimeout(() => {
+                row.remove();
+                if (!document.querySelector('#catalogList [data-catalog-row]')) {
+                    document.getElementById('catalogList').innerHTML =
+                        '<p class="pd-empty">Ya agregaste todas las canciones del catálogo a esta playlist. 🎉</p>';
+                }
+            }, 200);
 
             const emptyMsg = document.getElementById('emptyPlaylistMsg');
             if (emptyMsg) emptyMsg.remove();
@@ -177,13 +259,59 @@ document.querySelectorAll('.pd-add-btn[data-catalog-add-id]').forEach(btn => {
             actualizarContador();
         });
     });
-});
+}
+document.querySelectorAll('.pd-add-btn[data-catalog-add-id]').forEach(enlazarBotonAgregar);
 
 // ── FILTRO DE BÚSQUEDA EN EL CATÁLOGO (cliente, instantáneo) ──
 document.getElementById('catalogSearchInput').addEventListener('input', function() {
     const query = this.value.toLowerCase().trim();
     document.querySelectorAll('#catalogList [data-catalog-row]').forEach(row => {
         row.style.display = row.dataset.searchText.includes(query) ? 'flex' : 'none';
+    });
+});
+
+// ── ELIMINAR PLAYLIST (con modal de advertencia) ────────
+const modalEliminar = document.getElementById('modalEliminarPlaylist');
+const btnEliminarPlaylist = document.getElementById('btnEliminarPlaylist');
+const btnCancelarEliminar = document.getElementById('btnCancelarEliminarPlaylist');
+const btnConfirmarEliminar = document.getElementById('btnConfirmarEliminarPlaylist');
+
+btnEliminarPlaylist.addEventListener('click', () => {
+    modalEliminar.style.display = 'flex';
+});
+
+btnCancelarEliminar.addEventListener('click', () => {
+    modalEliminar.style.display = 'none';
+});
+
+modalEliminar.addEventListener('click', (e) => {
+    if (e.target === modalEliminar) modalEliminar.style.display = 'none';
+});
+
+btnConfirmarEliminar.addEventListener('click', () => {
+    btnConfirmarEliminar.disabled = true;
+    btnConfirmarEliminar.textContent = 'Eliminando...';
+
+    fetch("{% url 'Main:eliminar_playlist' %}", {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrftoken },
+        body: JSON.stringify({ playlistId: PLAYLIST_ID })
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.ok) {
+            window.location.href = "{% url 'Main:mi_biblioteca' %}";
+        } else {
+            alert('Error: ' + (data.error || 'No se pudo eliminar la playlist.'));
+            btnConfirmarEliminar.disabled = false;
+            btnConfirmarEliminar.textContent = 'Sí, eliminar';
+        }
+    })
+    .catch(err => {
+        console.error('Error eliminando playlist:', err);
+        alert('Ocurrió un error al eliminar la playlist.');
+        btnConfirmarEliminar.disabled = false;
+        btnConfirmarEliminar.textContent = 'Sí, eliminar';
     });
 });
 </script>
