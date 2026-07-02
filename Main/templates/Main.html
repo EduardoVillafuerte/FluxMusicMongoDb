@@ -403,9 +403,7 @@
         </div>
 
         <div class="panel">
-            <div class="panel-title">✨ Recomendado para ti</div>
-            <div class="panel-sub">Basado en tu historial musical</div>
-            <ul class="mlist">
+            <ul class="mlist" id="recomendacionesList">
                 {% for item in recomendaciones %}
                 <li class="cancion-clickable" style="cursor: pointer;"
                     data-id="{{ item.CancionId }}"

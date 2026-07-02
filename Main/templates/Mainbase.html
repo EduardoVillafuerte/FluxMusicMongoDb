@@ -259,7 +259,10 @@
         }
         .toggle-btn:hover { color: var(--text); }
 
-        .main-content { padding: 0; width: 100%; }
+        .main-content {
+            margin-top: 0;
+            padding-top: 1rem; /* Un margen pequeño es suficiente */
+        }
                 /* ── BOTÓN SEGUIR ARTISTA (fullPlayer) ─────────────── */
         .follow-artist-btn {
             margin-top: 1.2rem;
@@ -301,6 +304,24 @@
         * {
             max-width: 100%;
         }
+
+        /* Cuando el sidebar está contraído, ocultamos elementos que sobran */
+        .sidebar.collapsed .playlist-section, 
+        .sidebar.collapsed .nav-item span,
+        .sidebar.collapsed .profile-info {
+            display: none !important;
+        }
+
+        /* Ajustamos el avatar para que quede centrado al contraer */
+        .sidebar.collapsed .profile-trigger {
+            justify-content: center;
+        }
+
+        /* Opcional: reducimos el padding del header para que no se vea tan vacío */
+        .sidebar.collapsed + .main-container header {
+            padding: 0 1rem;
+        }
+
     </style>
     
     {% block extra_css %}{% endblock %}
@@ -320,12 +341,12 @@
                 <i class="fa-solid fa-house"></i> <span>Inicio</span>
             </a>
 
-            {% if request.session.rol != 'Premium' and request.session.plan_tipo != 'Premium' %}
+            {% if request.session.plan_tipo != 'Premium' %}
             <a href="{% url 'Main:ver_planes' %}" class="nav-item">
-                <i class="fa-solid fa-crown"></i> Planes
+                <i class="fa-solid fa-crown"></i> <span>Planes</span>
             </a>
             {% endif %}
-            
+
             <span class="nav-label">Tú</span>
             <a href="{% url 'Main:mi_biblioteca' %}" class="nav-item" style="color: #2fdbb7; font-weight: 600; text-shadow: 0 0 8px rgba(47, 219, 183, 0.4);">
                 <i class="fa-regular fa-heart"></i> <span>Tu Biblioteca</span>
@@ -341,7 +362,7 @@
             <span class="nav-label" style="margin-top: 20px;">Tus Playlists</span>
             <div class="playlist-list">
                 {% for playlist in playlists %}
-                    <a href="#" class="nav-item">
+                    <a href="{% url 'Main:playlist_detail' playlist.PlaylistID %}" class="nav-item">
                         <i class="fa-solid fa-music"></i> <span>{{ playlist.Playlist }}</span>
                     </a>
                 {% empty %}
@@ -353,17 +374,7 @@
         </nav>
     </aside>
 
-    <div class="playlist-list">
-        {% for playlist in playlists %}
-            <a href="{% url 'Main:playlist_detail' playlist.PlaylistID %}" class="nav-item">
-                <i class="fa-solid fa-music"></i> <span>{{ playlist.Playlist }}</span>
-            </a>
-        {% empty %}
-            <span class="nav-item" style="font-style: italic; pointer-events: none;">
-                <i class="fa-solid fa-music" style="opacity: 0.3;"></i> <span>Sin playlists</span>
-            </span>
-        {% endfor %}
-    </div>
+
 
     <div class="main-wrap">
         <header class="topbar">
@@ -389,7 +400,7 @@
                                 
                                 <div class="avatar-container" style="position: relative; width: 40px; height: 40px;">
                                     
-                                    {% if request.session.rol == 'Premium' or request.session.plan_tipo == 'Premium' %}
+                                    {% if request.session.plan_tipo == 'Premium' %}
                                     <div class="premium-crown" style="position: absolute; top: -14px; left: 50%; transform: translateX(-50%) rotate(-5deg); font-size: 1.1rem; color: #f59e0b; text-shadow: 0 0 8px rgba(245,158,11,0.6); z-index: 10; animation: floatCrown 3s ease-in-out infinite;">
                                         <i class="fa-solid fa-crown"></i>
                                     </div>
@@ -410,14 +421,14 @@
                         <li class="dropdown-header" style="color:#8a94a6; font-size:.85rem; font-weight:700;">Menú</li>
                         
                         {% if request.session.rol == 'Administrador' %}
-                        <li><a class="dropdown-item" href="{% url 'usuarios:listar_usuarios' %}" style="color:#dde3f0; padding:10px 15px; border-radius:8px; font-weight:500;"><i class="fa-solid fa-users me-2 text-primary"></i> Usuarios</a></li>
+                        <li><a class="dropdown-item" href="{% url 'listar_usuarios' %}" style="color:#dde3f0; padding:10px 15px; border-radius:8px; font-weight:500;"><i class="fa-solid fa-users me-2 text-primary"></i> Usuarios</a></li>
                         {% endif %}
                         
                         <li><a class="dropdown-item" href="{% url 'usuarios:mi_perfil' %}" style="color:#dde3f0; padding:10px 15px; border-radius:8px; font-weight:500;"><i class="fa-solid fa-user me-2 text-info"></i> Mi Perfil</a></li>
                         <li><a class="dropdown-item" href="{% url 'usuarios:editar_perfil' %}" style="color:#dde3f0; padding:10px 15px; border-radius:8px; font-weight:500;"><i class="fa-solid fa-gear me-2 text-secondary"></i> Configuración</a></li>
                         <li><hr class="dropdown-divider" style="border-color:#2a2f3a;"></li>
                         
-                        <li><a class="dropdown-item text-danger" href="{% url 'login' %}" style="padding:10px 15px; border-radius:8px; font-weight:600;"><i class="fa-solid fa-right-from-bracket me-2"></i> Cerrar sesión</a></li>
+                        <li><a class="dropdown-item text-danger" href="{% url 'logout' %}" style="padding:10px 15px; border-radius:8px; font-weight:600;"><i class="fa-solid fa-right-from-bracket me-2"></i> Cerrar sesión</a></li>
                     </ul>
                 </div>
             </div>
@@ -637,6 +648,14 @@
                 if (data.ok) {
                     btnEl.classList.add('added');
                     btnEl.innerHTML = '<i class="fa-solid fa-check"></i>';
+
+                    // Ya está en la biblioteca: la quitamos de "Recomendado para ti"
+                    const fila = btnEl.closest('.cancion-clickable');
+                    if (fila && fila.closest('#recomendacionesList')) {
+                        fila.style.transition = 'opacity .25s ease';
+                        fila.style.opacity = '0';
+                        setTimeout(() => fila.remove(), 250);
+                    }
                 }
             })
             .catch(err => console.error('Error agregando a biblioteca:', err));
@@ -681,8 +700,11 @@
         });
 
         document.getElementById('toggleSidebar').addEventListener('click', function() {
-            document.getElementById('sidebar').classList.toggle('collapsed');
-            document.querySelector('.main-wrap').classList.toggle('expanded');
+            const sidebar = document.getElementById('sidebar');
+            const mainWrap = document.querySelector('.main-wrap');
+
+            sidebar.classList.toggle('collapsed');
+            mainWrap.classList.toggle('expanded');
         });
 
         // ── BUSCADOR GLOBAL (topbar) ────────────────────────

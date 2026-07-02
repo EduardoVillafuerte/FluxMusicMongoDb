@@ -2,6 +2,7 @@ import hashlib
 from django.shortcuts import render, redirect
 from django.contrib import messages
 from pymongo import MongoClient
+from usuarios.db_connection import get_db
 
 def login_custom(request):
     if request.method == 'POST':
@@ -13,8 +14,7 @@ def login_custom(request):
         hashed_password = hashlib.sha256(password_input.encode('utf-8')).hexdigest().upper()
         
         try:
-            client = MongoClient('mongodb://localhost:27017/')
-            db = client['FluxMusicMongoBD'] # <-- Usando el nombre correcto terminado en BD
+            db = get_db()
             coleccion_usuarios = db['usuarios']
             
             # Buscamos que coincida el email Y la contraseña ya hasheada
@@ -23,12 +23,16 @@ def login_custom(request):
                 'password': hashed_password
             })
             
+            # En login_custom
             if usuario_valido:
-                # Guardar el usuarioId numérico y datos de sesión
+                # Limpiamos cualquier dato de sesión de un login anterior
+                # (evita que queden mezclados nickname/rol/plan de otra cuenta)
+                request.session.flush()
+
                 request.session['usuario_id'] = usuario_valido.get('usuarioId')
-                request.session['nickname'] = usuario_valido.get('nickname', '')
-                request.session['rol'] = usuario_valido.get('rolPerfil', '')
-                
+                request.session['nickname'] = usuario_valido.get('nickname', 'Usuario')
+                request.session['rol'] = usuario_valido.get('rolPerfil', 'Oyente') # Permisos
+                request.session['plan_tipo'] = usuario_valido.get('planActivo', 'Free') # Beneficios
                 return redirect('/Main/')
             else:
                 messages.error(request, "El correo electrónico o la contraseña son incorrectos.")
@@ -57,8 +61,7 @@ def registro_view(request):
         hashed_password = hashlib.sha256(password.encode('utf-8')).hexdigest().upper()
 
         try:
-            client = MongoClient('mongodb://localhost:27017/')
-            db = client['FluxMusicMongoBD']
+            db = get_db()
             coleccion_usuarios = db['usuarios']
             
             # Verificar si el correo ya existe
@@ -91,3 +94,6 @@ def registro_view(request):
 
     return render(request, 'registrarse.html')
 
+def logout_view(request):
+    request.session.flush()
+    return redirect('login')

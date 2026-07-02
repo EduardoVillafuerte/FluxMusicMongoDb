@@ -84,8 +84,14 @@ def dashboard_negocio(request):
                     {'oyenteId': oyente_id}, {'cancionId': 1}
                 )
             ]
+            gustadas_ids = [
+                i['cancionId'] for i in db['interacciones'].find(
+                    {'oyenteId': oyente_id, 'tipoInteraccion': 'Like'}, {'cancionId': 1}
+                )
+            ]
+            excluidas_ids = list(set(escuchadas_ids) | set(gustadas_ids))
             recomendaciones = list(db['canciones'].aggregate([
-                {'$match': {'cancionId': {'$nin': escuchadas_ids}}},
+                {'$match': {'cancionId': {'$nin': excluidas_ids}}},
                 {'$sample': {'size': 6}},
                 {'$lookup': {'from': 'catalogo', 'localField': 'albumId',
                              'foreignField': 'albumID', 'as': 'albumData'}},
@@ -659,49 +665,29 @@ def ver_planes(request):
         messages.error(request, f"Error al cargar los planes: {str(e)}")
         return render(request, 'Planes.html', {'planes': []})
 
+# Main/views.py
+
 @csrf_protect
 def cambiar_plan(request):
     if request.method == 'POST':
         import json
         try:
             data = json.loads(request.body)
-            tipo_plan = data.get('tipoPlan') # 'Free' o 'Premium'
+            nuevo_plan = data.get('tipoPlan') # Ej: 'Free' o 'Premium'
             usuario_id = request.session.get('usuario_id')
-
-            if not usuario_id:
-                return JsonResponse({'ok': False, 'error': 'Sesión no válida'}, status=401)
 
             db = get_db()
             
-            # Buscamos el ID del plan elegido
-            plan = db['planes'].find_one({'tipoPlan': tipo_plan})
-            if not plan:
-                return JsonResponse({'ok': False, 'error': 'Plan no encontrado'}, status=404)
-
-            from bson.objectid import ObjectId
-            # Actualizamos el usuario en MongoDB convirtiendo su rolPerfil o actualizando su suscripción activa
-            # Para que la corona aparezca, guardamos el estado del plan en su rol o dentro de un campo específico.
-            # En este caso, modificaremos 'rolPerfil' a 'Premium' si era un Oyente normal, o actualizaremos su suscripción
-                # Buscamos directamente por tu campo numérico (usuarioId) migrado de SQL
+            # Actualizamos SOLO el campo del plan
             db['usuarios'].update_one(
                 {'usuarioId': int(usuario_id)},
-                {'$set': {
-                    'suscripcionActiva.planId': plan.get('planID'),
-                    'suscripcionActiva.estado': 'Activo',
-                    'rolPerfil': tipo_plan if request.session.get('rol') != 'Administrador' else 'Administrador'
-                }}
+                {'$set': {'planActivo': nuevo_plan}} # Campo separado del rol
             )
 
-            # 🔥 Crucial: Actualizamos la sesión de Django al instante
-            if request.session.get('rol') != 'Administrador':
-                request.session['rol'] = tipo_plan
-            
-            # Guardamos una variable extra en sesión por si es Administrador pero quiere ver su corona de prueba
-            request.session['plan_tipo'] = tipo_plan
+            # Sincronizamos la sesión
+            request.session['plan_tipo'] = nuevo_plan
+            request.session.modified = True
 
             return JsonResponse({'ok': True})
-
         except Exception as e:
             return JsonResponse({'ok': False, 'error': str(e)}, status=500)
-
-    return JsonResponse({'ok': False, 'error': 'Método no permitido'}, status=455)
